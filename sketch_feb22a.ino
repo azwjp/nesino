@@ -19,18 +19,17 @@ void setup() {
 
   ///*
   // put your setup code here, to run once:
-  // setup timer1 to send a sample every interrupt
+  // setup timer1
   cli();      // 割り込み禁止
   // 高速PWM，コンペアマッチでLOW，TOPは0xFF，pin6有効，pin9なし
-  TCCR0A &= 0b00001100;
-  TCCR0A |= 0b10000011;
-  TCCR0B &= ~_BV(3);
+  TCCR0A = 0b10100011;
+  TCCR0B &= ~_BV(WGM02);
   // 分周 1/1
   TCCR0B = (TCCR0B & 0b11111000) | 0b00000001;
-  // Set the compare register(OCR1A)
+  // compare register
   OCR0A = 0x7F;
   // 割り込み無し
-  TIMSK0 &= 0x11110000;
+  TIMSK0 = 0;
   
   // set CTC mode(clear timer on compare match)
   TCCR2A = 0b00000010;
@@ -43,27 +42,27 @@ void setup() {
   // 1/1024
   TCCR2B = (TCCR2B & 0b11111000) | 0b00000101;
   
-  // Set the compare register(OCR1A)
-  OCR2A = 50;
+  // compare register
+  OCR2A = 100;
   
-  // enable interrupt when TCNT1 == OCR1A
+  // interrupt when TCNT2 == OCR2A
   TIMSK2 = _BV(OCIE2A);
 
   sei();
   //*/
   /*
   cli();      // 割り込み禁止
-  // set CTC mode(clear timer on compare match)
+  // CTC mode
   TCCR1B = (TCCR1B & ~_BV(WGM13)) | _BV(WGM12);
   TCCR1A = TCCR1A & ~(_BV(WGM11) | _BV(WGM10));
   
   // prescaler
   TCCR1B = 0b00001101;
   
-  // Set the compare register(OCR1A)
+  // compare register
   OCR1A = 20;  // 16e6 / 割り込み周波数
   
-  // enable interrupt when TCNT1 == OCR1A
+  // interrupt when TCNT1 == OCR1A
   TIMSK1 |= _BV(OCIE1A);
   
   sei();    // 割り込み許可
@@ -74,6 +73,7 @@ void setup() {
   counterSq1Reset = (sq1 && 0b111111111110000000000000000) >> 16;
   pinMode(13, OUTPUT);
     pinMode(12, OUTPUT);
+    pinMode(6, OUTPUT);
 }
 
 void loop() {
@@ -89,8 +89,10 @@ ISR(TIMER2_COMPA_vect){
     c = 1;
   }
   if (c == 1) {
+    OCR0A = 0x7f;
       PORTB |= _BV(4);
   } else {
+    OCR0A = 0;
       PORTB &= ~_BV(4);
   }//*/
  /*
