@@ -3,6 +3,7 @@
 constexpr byte dacResolution = 8;
 constexpr byte channel = 4;
 constexpr byte triSize = 32;
+constexpr byte sqrSize = 8;
 constexpr int range = (1 << dacResolution) / channel;
 constexpr int rangeMax = range - 1;
 
@@ -20,7 +21,7 @@ PROGMEM const char dataSq1[] = {1,2,3};
 
 // sq1 設定
 volatile bool sq1Enable = true;
-volatile int sq1Freq = 127; // 0-2047 << 5
+volatile int sq1Freq = 125; // 0-2047 << 5
 volatile bool sq1Env = false; // Envelope
 volatile byte sq1Duty = 2; // 0-3
 volatile byte sq1FC = 0; // FreqChange 周波数変更量
@@ -28,7 +29,7 @@ volatile bool sq1FCDirection = false; // 周波数変更方向 true->上がっ�
 volatile byte sq1FCCount = 0; // 周波数変更カウント数
 volatile bool sq1Sweep = false; // スイープ有効フラグ
 // sq1 カウンタ
-volatile byte sq1Pointer = 0; // 波形のどこを再生しているか
+volatile byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
 volatile int sq1Counter = 0; // 分周器
 
 // noise
@@ -42,18 +43,18 @@ void setup() {
   for (int i = 0; i < triSize; i++) {
     tri[i] = range * (i < triSize / 2 ? i : triSize - i - 1) / (triSize / 2);
     saw[i] = range * i / triSize;
-    sqr[0][i] = i == 0 ? rangeMax : i == triSize / 8 ? - rangeMax : 0;
-    sqr[1][i] = i == 0 ? rangeMax : i == triSize / 4 ? - rangeMax : 0;
-    sqr[2][i] = i == 0 ? rangeMax : i == triSize / 2 ? - rangeMax : 0;
-    
-    sq0[i] = i < triSize / 8 ? rangeMax : 0;
-    sq1[i] = i < triSize / 4 ? rangeMax : 0;
-    sq2[i] = i < triSize / 2 ? rangeMax : 0;
+  }
+  for (int i = 0; i < sqrSize; i++) {
+    sqr[0][i] = i == 0 ? 1 : i == sqrSize / 8 ? -1 : 0;
+    sqr[1][i] = i == 0 ? 1 : i == sqrSize / 4 ? -1 : 0;
+    sqr[2][i] = i == 0 ? 1 : i == sqrSize / 2 ? -1 : 0;
   }
   /*
   Serial.begin(9600);
-  for (int i = 0; i < 128; i++) {
-    Serial.print(sqr[0][i]);
+    Serial.print(rangeMax);
+  
+  for (int i = 0; i < 8; i++) {
+    Serial.print((int)sqr[1][i]);
   }//*/
 
   cli();      // 割り込み禁止
@@ -125,10 +126,11 @@ byte calcNoise() { // 0 1 で返す
 volatile byte c = 0;
 volatile int i = 0;
 volatile byte output = 0;
+volatile bool lastNoise = false;
 
 ISR(TIMER2_COMPA_vect){
   //output = 0;
-  /*
+  ///*
   output = 0;
   if (noiseEnable && ++noiseCounter == noiseCountMax) {
     noiseCounter = 0;
@@ -137,19 +139,13 @@ ISR(TIMER2_COMPA_vect){
   ///*
   if (sq1Enable && ++sq1Counter == sq1Freq) {
     sq1Counter = 0;
-    //output = sqr[sq1Duty][sq1Pointer == triSize ? sq1Pointer = 0 : ++sq1Pointer];
+    
+    OCR0A += sqr[sq1Duty][sq1Pointer == sqrSize ? sq1Pointer = 0 : ++sq1Pointer] * rangeMax;
     //output = ((sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer) >= (sq1Duty << 1)) * rangeMax;
     //OCR0A += (sq1Pointer == 0 ? 1 : ((sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer) << 1 == sq1Duty) * -1) * rangeMax;
-    sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer;
-    if (sq1Pointer == 0) {
-      OCR0A += rangeMax;
-    } else {
-      if (sq1Duty == 0 && sq1Pointer == 1) {
-        OCR0A -= rangeMax;
-      } else if (sq1Pointer << 1 == sq1Duty) {
-        OCR0A -= rangeMax;
-      }
-    }
+    //sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer;
+
+    //Serial.println(OCR0A);
     
   }//*/
 //  OCR0A = output;
