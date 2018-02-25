@@ -20,24 +20,41 @@ volatile byte triPointer = 0;
 PROGMEM const char dataSq1[] = {1,2,3};
 
 // sq1 設定
-volatile bool sq1Enable = true;
-volatile int sq1Freq = 125; // 0-2047 << 5
-volatile bool sq1Env = false; // Envelope
-volatile byte sq1Duty = 2; // 0-3
-volatile byte sq1FC = 0; // FreqChange 周波数変更量
-volatile bool sq1FCDirection = false; // 周波数変更方向 true->上がっていく
-volatile byte sq1FCCount = 0; // 周波数変更カウント数
-volatile bool sq1Sweep = false; // スイープ有効フラグ
+bool sq1Enable = true;
+int sq1Freq = 107; // 0-2047 << 5
+bool sq1Env = false; // Envelope
+byte sq1Duty = 2; // 0-3
+byte sq1FC = 0; // FreqChange 周波数変更量
+bool sq1FCDirection = false; // 周波数変更方向 true->上がっていく
+byte sq1FCCount = 0; // 周波数変更カウント数
+bool sq1Sweep = false; // スイープ有効フラグ
+byte sq1Vol = 63; // 音量 0-15 * rangeMax / 15
 // sq1 カウンタ
-volatile byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
-volatile int sq1Counter = 0; // 分周器
+byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
+int sq1Counter = 0; // 分周器
+
+// sq2 設定
+bool sq2Enable = true;
+int sq2Freq = 85; // 0-2047 << 5
+bool sq2Env = false; // Envelope
+byte sq2Duty = 2; // 0-3
+byte sq2FC = 0; // FreqChange 周波数変更量
+bool sq2FCDirection = false; // 周波数変更方向 true->上がっていく
+byte sq2FCCount = 0; // 周波数変更カウント数
+bool sq2Sweep = false; // スイープ有効フラグ
+byte sq2Vol = 63; // 音量 0-15 * rangeMax / 15
+// sq1 カウンタ
+byte sq2Pointer = sqrSize; // 波形のどこを再生しているか
+int sq2Counter = 0; // 分周器
 
 // noise
 volatile bool noiseEnable = false;
-volatile bool noiseShortFreq = false;
-volatile unsigned int noiseReg = 0x8000;
-volatile byte noiseCounter = 0;
-volatile byte noiseCountMax = 0x2;
+bool noiseShortFreq = false;
+unsigned int noiseReg = 0x8000;
+byte noiseCountMax = 0x20;
+byte noiseVol = 10; // 音量 0-15 * rangeMax / 15
+// noise カウンタ
+byte noiseCounter = 0;
 
 void setup() {
   for (int i = 0; i < triSize; i++) {
@@ -45,9 +62,9 @@ void setup() {
     saw[i] = range * i / triSize;
   }
   for (int i = 0; i < sqrSize; i++) {
-    sqr[0][i] = i == 0 ? 1 : i == sqrSize / 8 ? -1 : 0;
-    sqr[1][i] = i == 0 ? 1 : i == sqrSize / 4 ? -1 : 0;
-    sqr[2][i] = i == 0 ? 1 : i == sqrSize / 2 ? -1 : 0;
+    sqr[0][i] = i < sqrSize / 8 ? 1 : 0;
+    sqr[1][i] = i < sqrSize / 4 ? 1 : 0;
+    sqr[2][i] = i < sqrSize / 2 ? 1 : 0;
   }
   /*
   Serial.begin(9600);
@@ -98,7 +115,7 @@ void setup() {
   
   // compare register
   // 16 MHz / 割り込み周波数 (Hz)
-  OCR1A = 800;//8332;
+  OCR1A = 8332;//8332;
   
   // 割り込み
   TIMSK1 |= _BV(OCIE1A);
@@ -112,9 +129,6 @@ void setup() {
   
 }
 
-void loop() {
-}
-
 #define calcNoise() ((noiseReg = (noiseReg >> 1) | ((((noiseReg >> 1) ^ (noiseReg >> (noiseShortFreq ? 7 : 2))) & 1) << 15)) & 1)
 /*
 byte calcNoise() { // 0 1 で返す
@@ -123,38 +137,55 @@ byte calcNoise() { // 0 1 で返す
   return noiseReg & 1;
 }*/
 
-volatile byte c = 0;
-volatile int i = 0;
-volatile byte output = 0;
-volatile bool lastNoise = false;
+volatile bool waveChange = false;
+
+byte output = 0;
+byte currentNoise = 0;
+
+void loop() {
+  if (waveChange) {
+    waveChange = false;
+    //output = 0;
+    ///*
+    if (noiseEnable) {
+      if (++noiseCounter == noiseCountMax) {
+        noiseCounter = 0;
+        currentNoise = calcNoise() * noiseVol;
+      }
+      output = currentNoise;
+    } else {
+      output = 0;
+    }
+      //*/
+    ///*
+
+    if (sq1Enable) {
+      if (++sq1Counter == sq1Freq) {
+        sq1Counter = 0;
+        sq1Pointer == sqrSize ? sq1Pointer = 0 : ++sq1Pointer;
+      }
+      output += sqr[sq1Duty][sq1Pointer] * sq1Vol;
+    }
+    if (sq2Enable) {
+      if (++sq2Counter == sq2Freq) {
+        sq2Counter = 0;
+        sq2Pointer == sqrSize ? sq2Pointer = 0 : ++sq2Pointer;
+      }
+      output += sqr[sq2Duty][sq2Pointer] * sq2Vol;
+    }//*/
+    
+    OCR0A = output;
+  }
+}
 
 ISR(TIMER2_COMPA_vect){
-  //output = 0;
-  ///*
-  output = 0;
-  if (noiseEnable && ++noiseCounter == noiseCountMax) {
-    noiseCounter = 0;
-    output = calcNoise() * rangeMax; //tri[triPointer == triSize ? triPointer = 0 : ++triPointer];
-  }//*/
-  ///*
-  if (sq1Enable && ++sq1Counter == sq1Freq) {
-    sq1Counter = 0;
-    
-    OCR0A += sqr[sq1Duty][sq1Pointer == sqrSize ? sq1Pointer = 0 : ++sq1Pointer] * rangeMax;
-    //output = ((sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer) >= (sq1Duty << 1)) * rangeMax;
-    //OCR0A += (sq1Pointer == 0 ? 1 : ((sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer) << 1 == sq1Duty) * -1) * rangeMax;
-    //sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer;
-
-    //Serial.println(OCR0A);
-    
-  }//*/
-//  OCR0A = output;
+  waveChange = true;
 }
 volatile byte foo = 0;
 ISR(TIMER1_COMPA_vect){
-  
   //digitalWrite(13, foo = !foo ? HIGH : LOW);
   PORTB = foo = !foo ? 0b100000 : 0;
+  
   //PORTB |= _BV(5);
   /*
   if (foo < 2) {
