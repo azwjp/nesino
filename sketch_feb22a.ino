@@ -10,10 +10,6 @@ constexpr int rangeMax = range - 1;
 byte tri[triSize]; // 三角波データ
 byte saw[triSize]; // 三角波データ
 char sqr[4][triSize];
-byte sq0[triSize]; // 三角波データ
-byte sq1[triSize]; // 三角波データ
-byte sq2[triSize]; // 三角波データ
-byte sq3[triSize]; // 三角波データ
 volatile byte triPointer = 0;
 
 //
@@ -91,8 +87,7 @@ void setup() {
   // 割り込み無し
   TIMSK0 = 0;
 
-///*
-  // TIMER2: 出力の強さを変更するための PWM
+  // TIMER2: 波形を変更するタイミング
   // CTC
   TCCR2A = 0b00000010;
   TCCR2B &= ~_BV(WGM02);
@@ -102,9 +97,8 @@ void setup() {
   OCR2A = 71;
   // interrupt when TCNT1 == OCR1A
   TIMSK2 = _BV(OCIE2A);
-//*/
 
-///*
+  // TIMER1: 音の出力の設定を変更する
   // CTC (ICR1)
   TCCR1B = (TCCR1B & ~_BV(WGM13)) | _BV(WGM12);
   TCCR1A = TCCR1A & ~(_BV(WGM11) | _BV(WGM10));
@@ -119,7 +113,6 @@ void setup() {
   
   // 割り込み
   TIMSK1 |= _BV(OCIE1A);
-  //*/
   
   
   pinMode(13, OUTPUT);
@@ -145,8 +138,7 @@ byte currentNoise = 0;
 void loop() {
   if (waveChange) {
     waveChange = false;
-    //output = 0;
-    ///*
+
     if (noiseEnable) {
       if (++noiseCounter == noiseCountMax) {
         noiseCounter = 0;
@@ -156,9 +148,7 @@ void loop() {
     } else {
       output = 0;
     }
-      //*/
-    ///*
-
+    
     if (sq1Enable) {
       if (++sq1Counter == sq1Freq) {
         sq1Counter = 0;
@@ -166,13 +156,14 @@ void loop() {
       }
       output += sqr[sq1Duty][sq1Pointer] * sq1Vol;
     }
+    
     if (sq2Enable) {
       if (++sq2Counter == sq2Freq) {
         sq2Counter = 0;
         sq2Pointer == sqrSize ? sq2Pointer = 0 : ++sq2Pointer;
       }
       output += sqr[sq2Duty][sq2Pointer] * sq2Vol;
-    }//*/
+    }
     
     OCR0A = output;
   }
@@ -181,18 +172,9 @@ void loop() {
 ISR(TIMER2_COMPA_vect){
   waveChange = true;
 }
+
 volatile byte foo = 0;
 ISR(TIMER1_COMPA_vect){
   //digitalWrite(13, foo = !foo ? HIGH : LOW);
   PORTB = foo = !foo ? 0b100000 : 0;
-  
-  //PORTB |= _BV(5);
-  /*
-  if (foo < 2) {
-    ++foo;
-  } else {
-    //foo = 0;
-    sq1Enable = true;
-    
-  }*/
 }
