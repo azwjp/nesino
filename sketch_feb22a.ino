@@ -16,7 +16,7 @@ char sqr[4][triSize];
 PROGMEM const char dataSq1[] = {1,2,3};
 
 // sq1 設定
-bool sq1Enable = true;
+bool sq1Enable = false;
 int sq1Freq = 76; // 0-2047 << 5
 bool sq1Env = false; // Envelope
 byte sq1Duty = 2; // 0-3
@@ -30,7 +30,7 @@ byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
 int sq1Counter = 0; // 分周器
 
 // sq2 設定
-bool sq2Enable = true;
+bool sq2Enable = false;
 int sq2Freq = 40;//85; // 0-2047 << 5
 bool sq2Env = false; // Envelope
 byte sq2Duty = 2; // 0-3
@@ -45,7 +45,7 @@ int sq2Counter = 0; // 分周器
 
 
 // tri 設定
-bool triEnable = true;
+bool triEnable = false;
 int triFreq = 10;//85; // 0-2047 << 5
 bool triEnv = false; // Envelope
 byte triFC = 0; // FreqChange 周波数変更量
@@ -59,10 +59,10 @@ int triCounter = 0; // 分周器
 
 // noise
 bool noiseEnable = true;
-bool noiseShortFreq = false;
-unsigned int noiseReg = 0x8000;
+volatile bool noiseShortFreq = false;
+volatile unsigned int noiseReg = 0x8000;
 byte noiseCountMax = 0x20;
-byte noiseVol = 0; // 音量 0-15 * rangeMax / 15
+volatile byte noiseVol = 63; // 音量 0-15 * rangeMax / 15
 // noise カウンタ
 byte noiseCounter = 0;
 
@@ -138,13 +138,52 @@ void setup() {
   
 }
 
-#define calcNoise() ((noiseReg = (noiseReg >> 1) | ((((noiseReg >> 1) ^ (noiseReg >> (noiseShortFreq ? 7 : 2))) & 1) << 15)) & 1)
-/*
+
 byte calcNoise() { // 0 1 で返す
-  noiseReg >>= 1;
-  noiseReg |= ((noiseReg ^ (noiseReg >> (noiseShortFreq ? 6 : 1))) & 1) << 15;
-  return noiseReg & 1;
-}*/
+  asm volatile(
+// r25:r24 が noiseReg
+    "lds r24, noiseReg \n"
+    "lds r25, noiseReg+0x1 \n"
+// noiseReg >>= 1
+    "lsr r25 \n"
+    "ror r24 \n"
+// r5:r4 も noiseReg
+    "movw r4, r24 \n"
+// noiseShortFreq ?
+    "lds r5, noiseShortFreq \n"
+    "and r5, r4 \n"
+    "breq LONGFREQ \n"
+// noiseReg >> 6 r6:r4 下位一ビットがあれば良い
+    "clr r6 \n"
+    "lsl r4 \n"
+    "rol r5 \n"
+    "rol r6 \n"
+    "lsl r4 \n"
+    "rol r5 \n"
+    "rol r6 \n"
+    "mov r5, r6 \n"
+    "rjmp DONE \n"
+// noiseReg >> 1
+    "LONGFREQ: lsr r5 \n"
+    "ror r4 \n"
+// r5:r4 = shift済みreg ^ reg
+    "DONE: eor r4, r24 \n"
+    "eor r5, r25 \n"
+// & 1) << 15
+    "clr r5 \n"
+    "lsr r4 \n"
+    "ror r5 \n"
+// 最上位1bitだけ 0 or 1，残りは << 15 の為 0 -> 結果は r5 
+// noiseReg r3 |= r5
+    "or r25, r5 \n"
+    "sts (noiseReg), r24 \n"
+    "sts (noiseReg)+0x1, r25 \n"
+    "andi r24, 0x01"
+    :
+    :
+    :
+  );
+}
 
 volatile bool waveChange = false;
 volatile bool nextFrame = false;
@@ -161,13 +200,60 @@ void loop() {
   
   if (waveChange) {
     waveChange = false;
+    register uint8_t output asm("r2");
 
     if (noiseEnable) {
       if (++noiseCounter == noiseCountMax) {
+        asm volatile(
+          // r19:r18 が noiseReg
+            "lds r18, noiseReg \n"
+            "lds r19, noiseReg+0x1 \n"
+          // noiseReg >>= 1
+            "lsr r19 \n"
+            "ror r18 \n"
+          // r5:r4 も noiseReg
+            "movw r4, r18 \n"
+          // noiseShortFreq ?
+            "lds r0, noiseShortFreq \n"
+            "and r0, r0 \n"
+            "breq LONGFREQ \n"
+          // noiseReg >> 6 r6:r4 下位一ビットがあれば良い
+            "clr r6 \n"
+            "lsl r4 \n"
+            "rol r5 \n"
+            "rol r6 \n"
+            "lsl r4 \n"
+            "rol r5 \n"
+            "rol r6 \n"
+            "mov r5, r6 \n"
+            "rjmp DONE \n"
+          // noiseReg >> 1
+            "LONGFREQ: lsr r5 \n"
+            "ror r4 \n"
+          // r5:r4 = shift済みreg ^ reg
+            "DONE: eor r4, r18 \n"
+            "eor r5, r19 \n"
+          // & 1) << 15
+            "clr r5 \n"
+            "lsr r4 \n"
+            "ror r5 \n"
+          // 最上位1bitだけ 0 or 1，残りは << 15 の為 0 -> 結果は r5 
+          // noiseReg r19 |= r5
+            "or r19, r5 \n"
+            "sts noiseReg, r18 \n"
+            "sts noiseReg+1, r19 \n"
+            "andi r18, 0x1\n"
+          // calcNoise() * noiseVol
+            "lds r2, noiseVol \n"
+            "mul r18, r2 \n"
+            "mov r2, r0"
+            :"=r"(output)::
+        );
         noiseCounter = 0;
-        currentNoise = calcNoise() * noiseVol;
+        currentNoise = output;
+      } else {
+        output = currentNoise;
       }
-      output = currentNoise;
     } else {
       output = 0;
     }
