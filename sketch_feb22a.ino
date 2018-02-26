@@ -138,53 +138,6 @@ void setup() {
   
 }
 
-
-byte calcNoise() { // 0 1 で返す
-  asm volatile(
-// r25:r24 が noiseReg
-    "lds r24, noiseReg \n"
-    "lds r25, noiseReg+0x1 \n"
-// noiseReg >>= 1
-    "lsr r25 \n"
-    "ror r24 \n"
-// r5:r4 も noiseReg
-    "movw r4, r24 \n"
-// noiseShortFreq ?
-    "lds r5, noiseShortFreq \n"
-    "and r5, r4 \n"
-    "breq LONGFREQ \n"
-// noiseReg >> 6 r6:r4 下位一ビットがあれば良い
-    "clr r6 \n"
-    "lsl r4 \n"
-    "rol r5 \n"
-    "rol r6 \n"
-    "lsl r4 \n"
-    "rol r5 \n"
-    "rol r6 \n"
-    "mov r5, r6 \n"
-    "rjmp DONE \n"
-// noiseReg >> 1
-    "LONGFREQ: lsr r5 \n"
-    "ror r4 \n"
-// r5:r4 = shift済みreg ^ reg
-    "DONE: eor r4, r24 \n"
-    "eor r5, r25 \n"
-// & 1) << 15
-    "clr r5 \n"
-    "lsr r4 \n"
-    "ror r5 \n"
-// 最上位1bitだけ 0 or 1，残りは << 15 の為 0 -> 結果は r5 
-// noiseReg r3 |= r5
-    "or r25, r5 \n"
-    "sts (noiseReg), r24 \n"
-    "sts (noiseReg)+0x1, r25 \n"
-    "andi r24, 0x01"
-    :
-    :
-    :
-  );
-}
-
 volatile bool waveChange = false;
 volatile bool nextFrame = false;
 
@@ -211,35 +164,30 @@ void loop() {
           // noiseReg >>= 1
             "lsr r19 \n"
             "ror r18 \n"
-          // r5:r4 も noiseReg
-            "movw r4, r18 \n"
           // noiseShortFreq ?
             "lds r0, noiseShortFreq \n"
             "and r0, r0 \n"
             "breq LONGFREQ \n"
-          // noiseReg >> 6 r6:r4 下位一ビットがあれば良い
-            "clr r6 \n"
+          // noiseReg >> 6  下位 1 bit があれば良い -> r5に 1 bitだけ
+            "mov r4, r18 \n"
+            "clr r5 \n"
+            "lsl r4 \n"
             "lsl r4 \n"
             "rol r5 \n"
-            "rol r6 \n"
-            "lsl r4 \n"
-            "rol r5 \n"
-            "rol r6 \n"
-            "mov r5, r6 \n"
             "rjmp DONE \n"
           // noiseReg >> 1
-            "LONGFREQ: lsr r5 \n"
-            "ror r4 \n"
-          // r5:r4 = shift済みreg ^ reg
-            "DONE: eor r4, r18 \n"
-            "eor r5, r19 \n"
+            "LONGFREQ:"
+            "mov r5, r18 \n"
+            "lsr r5 \n"
+          // r5 = shift済みreg ^ reg
+            "DONE: eor r5, r18 \n"
           // & 1) << 15
-            "clr r5 \n"
-            "lsr r4 \n"
-            "ror r5 \n"
+            "clr r4 \n"
+            "lsr r5 \n"
+            "ror r4 \n"
           // 最上位1bitだけ 0 or 1，残りは << 15 の為 0 -> 結果は r5 
-          // noiseReg r19 |= r5
-            "or r19, r5 \n"
+          // noiseReg r19 |= r4
+            "or r19, r4 \n"
             "sts noiseReg, r18 \n"
             "sts noiseReg+1, r19 \n"
             "andi r18, 0x1\n"
@@ -247,7 +195,7 @@ void loop() {
             "lds r2, noiseVol \n"
             "mul r18, r2 \n"
             "mov r2, r0"
-            :"=r"(output)::
+            :"=&r"(output)::
         );
         noiseCounter = 0;
         currentNoise = output;
