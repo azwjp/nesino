@@ -15,6 +15,9 @@ char sqr[4][triSize];
 //
 PROGMEM const char dataSq1[] = {1,2,3};
 
+// enable設定
+volatile byte enableFlag = 0b00010001; // 000 noiseShortFrag sq1 sq2 tri noi
+
 // sq1 設定
 volatile bool sq1Enable = false;
 volatile int sq1Freq = 76; // 0-2047 << 5
@@ -58,13 +61,13 @@ volatile int triCounter = 0; // 分周器
 
 
 // noise
-volatile bool noiseEnable = true;
+volatile byte noiseEnable = 1; // 0b00: disable, 0b11: enable  (Short), 0b01: enable (Long)
 volatile bool noiseShortFreq = false;
 volatile unsigned int noiseReg = 0x8000;
-volatile byte noiseCountMax = 0x20;
+volatile int noiseCountMax = 0x20;
 volatile byte noiseVol = 32; // 音量 0-15 * rangeMax / 15
 // noise カウンタ
-volatile byte noiseCounter = 0;
+volatile int noiseCounter = 0;
 
 void setup() {
   for (int i = 0; i < triSize; i++) {
@@ -111,7 +114,7 @@ void setup() {
   // 分周 1/1
   TCCR2B = (TCCR2B & 0b11111000) | 0b00000001;
   // compare register
-  OCR2A = 255;
+  OCR2A = 100;
   // interrupt when TCNT1 == OCR1A
   TIMSK2 = _BV(OCIE2A);
 
@@ -142,7 +145,7 @@ volatile bool waveChange = false;
 volatile bool nextFrame = false;
 
 byte output = 0;
-byte currentNoise = 0;
+volatile byte currentNoise = 0;
 volatile byte foo = 0;
 
 void loop() {
@@ -158,12 +161,29 @@ void loop() {
 
 ISR(TIMER2_COMPA_vect){
     register uint8_t output asm("r2");
+    register uint8_t enable asm("r3");
 
-    if (noiseEnable) {
-      if (++noiseCounter == noiseCountMax) {
-        asm volatile(
-          
-          
+    asm volatile(
+// if noise is enabled {    
+        "lds r3, enableFlag \n"
+      // noiseがenableでなければ分岐
+        "sbrs r3, 0 \n"
+        "rjmp NOISEDISABLE \n"
+
+// // if (++noiseCounter == noiseCountMax)
+      // [r24, r25, r6, r7]
+        "lds r24, noiseCounter \n"
+        "lds r25, noiseCounter+1 \n"
+        "adiw r24, 1 \n"
+        "sts noiseCounter, r24 \n"
+        "sts noiseCounter+1, r25 \n"
+        "lds r6, noiseCountMax \n"
+        "lds r7, noiseCountMax+1 \n"
+        "cp r24, r6 \n"
+        "cpc r25, r7 \n"
+        "brne NOISE_NOT_UPDATE \n"
+
+          // [r18, r19]
           // r19:r18 が noiseReg
             "lds r18, noiseReg \n"
             "lds r19, noiseReg+0x1 \n"
@@ -171,10 +191,10 @@ ISR(TIMER2_COMPA_vect){
             "lsr r19 \n"
             "ror r18 \n"
           // noiseShortFreq ?
-            "lds r0, noiseShortFreq \n"
-            "and r0, r0 \n"
-            "breq LONGFREQ \n"
+            "sbrs r3, 4 \n"
+            "rjmp LONGFREQ \n"
           // noiseReg >> 6  下位 1 bit があれば良い -> r17に 1 bitだけ
+          // [r17, r18, r19]
             "clr r17 \n"
             "sbrc r18, 6 \n" // 6bit目が0ならスキップ，1ならスキップせず1
             "ldi r17, 1 \n"
@@ -186,6 +206,7 @@ ISR(TIMER2_COMPA_vect){
           // r17 = shift済みreg ^ reg
             "DONE: eor r17, r18 \n"
           // & 1) << 15
+          // [r16, r17, r18, r19]
             "clr r16 \n"
             "lsr r17 \n"
             "ror r16 \n"
@@ -198,26 +219,36 @@ ISR(TIMER2_COMPA_vect){
           // calcNoise() * noiseVol
             "lds r2, noiseVol \n"
             "mul r18, r2 \n"
-            "mov r2, r0"
-            :"=&r"(output)::
-        );
-        noiseCounter = 0;
-        currentNoise = output;
-      } else {
-        output = currentNoise;
-      }
-    } else {
-      output = 0;
-    }
-    
-    if (sq1Enable) {
+            "mov r2, r0 \n"
+            
+            "sts noiseCounter, r1 \n" // noiseCounter = 0
+            "sts currentNoise, r2 \n" // currentNoise = output
+
+            "rjmp SQ1 \n"
+
+// if noise counter is not max
+        "NOISE_NOT_UPDATE: clr r2 \n"
+        "lds r2, currentNoise \n"
+        "rjmp SQ1 \n"
+        
+// } else {
+        "NOISEDISABLE: clr r2 \n"
+// }
+// if sq1 is enabled
+        "SQ1: "
+        "sbrs r3, 3 \n"
+        "rjmp SQ2 \n"
+        :"=&r"(output)::
+    );
       if (++sq1Counter == sq1Freq) {
         sq1Counter = 0;
         sq1Pointer == sqrSize ? sq1Pointer = 0 : ++sq1Pointer;
       }
       output += sqr[sq1Duty][sq1Pointer] * sq1Vol;
-    }
     
+    asm volatile(
+        "SQ2: "
+        );
     if (sq2Enable) {
       if (++sq2Counter == sq2Freq) {
         sq2Counter = 0;
@@ -239,6 +270,9 @@ ISR(TIMER2_COMPA_vect){
 
 ISR(TIMER1_COMPA_vect){
   nextFrame = true;
-  noiseShortFreq = !noiseShortFreq;
+  //if (enableFlag & 0b10000) enableFlag &= 0b11101111;
+  //else enableFlag |= 0b10000;
+  //if (enableFlag & 0b10000) enableFlag = 0b00000001;
+  //else enableFlag = 0b10001;
   //digitalWrite(13, foo = !foo ? HIGH : LOW);
 }
