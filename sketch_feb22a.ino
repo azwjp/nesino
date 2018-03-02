@@ -16,7 +16,7 @@ char sqr[4][triSize];
 PROGMEM const char dataSq1[] = {1, 2, 3};
 
 // enable設定
-volatile byte enableFlag = 0b00011001; // 000 noiseShortFrag sq1 sq2 tri noi
+volatile byte enableFlag = 0b00011101; // 000 noiseShortFrag sq1 sq2 tri noi
 
 // sq1 設定
 volatile int sq1Freq = 45; // 0-2047 << 5
@@ -32,14 +32,14 @@ volatile byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
 volatile int sq1Counter = 0; // 分周器
 
 // sq2 設定
-volatile int sq2Freq = 45;//85; // 0-2047 << 5
+volatile int sq2Freq = 30;//85; // 0-2047 << 5
 volatile bool sq2Env = false; // Envelope
 volatile byte sq2Duty = 2; // 0-3
 volatile byte sq2FC = 0; // FreqChange 周波数変更量
 volatile bool sq2FCDirection = false; // 周波数変更方向 true->上がっていく
 volatile byte sq2FCCount = 0; // 周波数変更カウント数
 volatile bool sq2Sweep = false; // スイープ有効フラグ
-volatile byte sq2Vol = 0; // 音量 0-15
+volatile byte sq2Vol = 15; // 音量 0-15
 // sq1 カウンタ
 volatile byte sq2Pointer = sqrSize; // 波形のどこを再生しているか
 volatile int sq2Counter = 0; // 分周器
@@ -257,13 +257,13 @@ ISR(TIMER2_COMPA_vect) {
     "sts sq1Counter, r24 \n"
     "sts sq1Counter+1, r25 \n"
     "rjmp SQ1_ENABLE \n"
-    "SQ1_UPDATE: "
+  "SQ1_UPDATE: "
     "sts sq1Counter, r1 \n"
     "sts sq1Counter+1, r1 \n"
     "inc r16 \n"
     "sts sq1Pointer, r16 \n"
     // [r16, r5]
-    "SQ1_ENABLE:"
+  "SQ1_ENABLE:"
     // ((pointer & 0b111) <= (duty == 0 ? duty << 1 : duty << 1 - 1)) ? 1 : 0
     "andi r16, 0b111 \n" // pointer の下位3バイト
     "lds r5, sq1Duty \n"
@@ -274,21 +274,47 @@ ISR(TIMER2_COMPA_vect) {
     "brlo SQ2 \n"
     "lds r4, sq1Vol \n"
     "add r2, r4 \n"
-    :"=&r"(output), "=&r"(enable)::
-  );
-
-  asm volatile(
+    
+// if sq2 is enabled
   "SQ2: "
     "sbrs r3, 2 \n"
     "rjmp TRI \n"
+
+    // [r16]
+    "lds r16, sq2Pointer \n"
+//  if (++sq2Counter == sq2Freq) {
+    // [r16, r24, r25, r6, r7]
+    "lds r24, sq2Counter \n"
+    "lds r25, sq2Counter+1 \n"
+    "adiw r24, 1 \n"
+    "lds r6, sq2Freq \n"
+    "lds r7, sq2Freq+1 \n"
+    "cp r24, r6 \n"
+    "cpc r25, r7 \n"
+    // [r16, r24, r25]
+    "breq SQ2_UPDATE \n"
+    "sts sq2Counter, r24 \n"
+    "sts sq2Counter+1, r25 \n"
+    "rjmp SQ2_ENABLE \n"
+  "SQ2_UPDATE: "
+    "sts sq2Counter, r1 \n"
+    "sts sq2Counter+1, r1 \n"
+    "inc r16 \n"
+    "sts sq2Pointer, r16 \n"
+    // [r16, r5]
+  "SQ2_ENABLE:"
+    // ((pointer & 0b111) <= (duty == 0 ? duty << 1 : duty << 1 - 1)) ? 1 : 0
+    "andi r16, 0b111 \n" // pointer の下位3バイト
+    "lds r5, sq2Duty \n"
+    "lsl r5 \n"
+    "cpse r5, r1 \n"
+    "dec r5 \n"
+    "cp r5, r16 \n" // duty < pointer
+    "brlo TRI \n"
+    "lds r4, sq2Vol \n"
+    "add r2, r4 \n"
     :"=&r"(output), "=&r"(enable)::
   );
-    PORTB = 0b100000;
-    if (++sq2Counter == sq2Freq) {
-      sq2Counter = 0;
-      sq2Pointer == sqrSize ? sq2Pointer = 0 : ++sq2Pointer;
-    }
-    output += sqr[sq2Duty][sq2Pointer] * sq2Vol;
 
   asm volatile(
     "TRI: "
