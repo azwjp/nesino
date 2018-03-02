@@ -3,6 +3,7 @@
 constexpr byte dacResolution = 8;
 constexpr byte channel = 4;
 constexpr byte triSize = 32;
+constexpr byte triRange = 15; // triのデータに書かれている最大の音量
 constexpr byte sqrSize = 8;
 constexpr int range = (1 << dacResolution) / channel;
 constexpr int rangeMax = range - 1;
@@ -10,51 +11,64 @@ constexpr int rangeMax = range - 1;
 byte tri[triSize]; // 三角波データ
 byte saw[triSize]; // 三角波データ
 char sqr[4][triSize];
-volatile byte triPointer = 0;
 
 //
 PROGMEM const char dataSq1[] = {1,2,3};
 
 // sq1 設定
 bool sq1Enable = true;
-int sq1Freq = 107; // 0-2047 << 5
+int sq1Freq = 76; // 0-2047 << 5
 bool sq1Env = false; // Envelope
 byte sq1Duty = 2; // 0-3
 byte sq1FC = 0; // FreqChange 周波数変更量
 bool sq1FCDirection = false; // 周波数変更方向 true->上がっていく
 byte sq1FCCount = 0; // 周波数変更カウント数
 bool sq1Sweep = false; // スイープ有効フラグ
-byte sq1Vol = 63; // 音量 0-15 * rangeMax / 15
+byte sq1Vol = 00; // 0-63 音量 0-15 * rangeMax / 15
 // sq1 カウンタ
 byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
 int sq1Counter = 0; // 分周器
 
 // sq2 設定
 bool sq2Enable = true;
-int sq2Freq = 85; // 0-2047 << 5
+int sq2Freq = 40;//85; // 0-2047 << 5
 bool sq2Env = false; // Envelope
 byte sq2Duty = 2; // 0-3
 byte sq2FC = 0; // FreqChange 周波数変更量
 bool sq2FCDirection = false; // 周波数変更方向 true->上がっていく
 byte sq2FCCount = 0; // 周波数変更カウント数
 bool sq2Sweep = false; // スイープ有効フラグ
-byte sq2Vol = 63; // 音量 0-15 * rangeMax / 15
+byte sq2Vol = 20; // 0-63 音量 0-15 * rangeMax / 15
 // sq1 カウンタ
 byte sq2Pointer = sqrSize; // 波形のどこを再生しているか
 int sq2Counter = 0; // 分周器
 
+
+// tri 設定
+bool triEnable = true;
+int triFreq = 10;//85; // 0-2047 << 5
+bool triEnv = false; // Envelope
+byte triFC = 0; // FreqChange 周波数変更量
+bool FCDirection = false; // 周波数変更方向 true->上がっていく
+byte triFCCount = 0; // 周波数変更カウント数
+bool triSweep = false; // スイープ有効フラグ
+// tri カウンタ
+byte triPointer = triSize; // 波形のどこを再生しているか
+int triCounter = 0; // 分周器
+
+
 // noise
-volatile bool noiseEnable = false;
+bool noiseEnable = true;
 bool noiseShortFreq = false;
 unsigned int noiseReg = 0x8000;
 byte noiseCountMax = 0x20;
-byte noiseVol = 10; // 音量 0-15 * rangeMax / 15
+byte noiseVol = 0; // 音量 0-15 * rangeMax / 15
 // noise カウンタ
 byte noiseCounter = 0;
 
 void setup() {
   for (int i = 0; i < triSize; i++) {
-    tri[i] = range * (i < triSize / 2 ? i : triSize - i - 1) / (triSize / 2);
+    tri[i] = range * 16.0 / 15.0 * (i < triSize / 2 ? i : triSize - i - 1) / (triSize / 2);
     saw[i] = range * i / triSize;
   }
   for (int i = 0; i < sqrSize; i++) {
@@ -63,11 +77,10 @@ void setup() {
     sqr[2][i] = i < sqrSize / 2 ? 1 : 0;
   }
   /*
-  Serial.begin(9600);
-    Serial.print(rangeMax);
+  Serial.begin(9600);//
   
-  for (int i = 0; i < 8; i++) {
-    Serial.print((int)sqr[1][i]);
+  for (int i = 0; i < triSize; i++) {
+    Serial.println((int)tri[i]);
   }//*/
 
   cli();      // 割り込み禁止
@@ -87,14 +100,18 @@ void setup() {
   // 割り込み無し
   TIMSK0 = 0;
 
-  // TIMER2: 波形を変更するタイミング
+
+  /* TIMER2: 波形を変更するタイミング
+   * 本当は OCR2A = 8.9 にしたい．
+   * 早すぎるとTIMER1の割り込みに失敗するので 71
+   */
   // CTC
   TCCR2A = 0b00000010;
   TCCR2B &= ~_BV(WGM02);
   // 分周 1/1
   TCCR2B = (TCCR2B & 0b11111000) | 0b00000001;
   // compare register
-  OCR2A = 71;
+  OCR2A = 60;
   // interrupt when TCNT1 == OCR1A
   TIMSK2 = _BV(OCIE2A);
 
@@ -113,8 +130,7 @@ void setup() {
   
   // 割り込み
   TIMSK1 |= _BV(OCIE1A);
-  
-  
+    
   pinMode(13, OUTPUT);
   pinMode(12, OUTPUT);
   pinMode(6, OUTPUT);
@@ -131,11 +147,18 @@ byte calcNoise() { // 0 1 で返す
 }*/
 
 volatile bool waveChange = false;
+volatile bool nextFrame = false;
 
 byte output = 0;
 byte currentNoise = 0;
+volatile byte foo = 0;
 
 void loop() {
+  if (nextFrame) {
+    nextFrame = false;
+    PORTB = foo = !foo ? 0b100000 : 0;
+  }
+  
   if (waveChange) {
     waveChange = false;
 
@@ -164,6 +187,14 @@ void loop() {
       }
       output += sqr[sq2Duty][sq2Pointer] * sq2Vol;
     }
+
+    if (triEnable) {
+      if (++triCounter == triFreq) {
+        triCounter = 0;
+        triPointer == triSize ? triPointer = 0 : ++triPointer;
+      }
+      output += tri[triPointer];
+    }
     
     OCR0A = output;
   }
@@ -173,8 +204,7 @@ ISR(TIMER2_COMPA_vect){
   waveChange = true;
 }
 
-volatile byte foo = 0;
 ISR(TIMER1_COMPA_vect){
+  nextFrame = true;
   //digitalWrite(13, foo = !foo ? HIGH : LOW);
-  PORTB = foo = !foo ? 0b100000 : 0;
 }
