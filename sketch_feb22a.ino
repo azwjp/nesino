@@ -16,55 +16,55 @@ char sqr[4][triSize];
 PROGMEM const char dataSq1[] = {1,2,3};
 
 // sq1 設定
-bool sq1Enable = false;
-int sq1Freq = 76; // 0-2047 << 5
-bool sq1Env = false; // Envelope
-byte sq1Duty = 2; // 0-3
-byte sq1FC = 0; // FreqChange 周波数変更量
-bool sq1FCDirection = false; // 周波数変更方向 true->上がっていく
-byte sq1FCCount = 0; // 周波数変更カウント数
-bool sq1Sweep = false; // スイープ有効フラグ
-byte sq1Vol = 00; // 0-63 音量 0-15 * rangeMax / 15
+volatile bool sq1Enable = false;
+volatile int sq1Freq = 76; // 0-2047 << 5
+volatile bool sq1Env = false; // Envelope
+volatile byte sq1Duty = 2; // 0-3
+volatile byte sq1FC = 0; // FreqChange 周波数変更量
+volatile bool sq1FCDirection = false; // 周波数変更方向 true->上がっていく
+volatile byte sq1FCCount = 0; // 周波数変更カウント数
+volatile bool sq1Sweep = false; // スイープ有効フラグ
+volatile byte sq1Vol = 20; // 0-63 音量 0-15 * rangeMax / 15
 // sq1 カウンタ
-byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
-int sq1Counter = 0; // 分周器
+volatile byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
+volatile int sq1Counter = 0; // 分周器
 
 // sq2 設定
-bool sq2Enable = false;
-int sq2Freq = 40;//85; // 0-2047 << 5
-bool sq2Env = false; // Envelope
-byte sq2Duty = 2; // 0-3
-byte sq2FC = 0; // FreqChange 周波数変更量
-bool sq2FCDirection = false; // 周波数変更方向 true->上がっていく
-byte sq2FCCount = 0; // 周波数変更カウント数
-bool sq2Sweep = false; // スイープ有効フラグ
-byte sq2Vol = 20; // 0-63 音量 0-15 * rangeMax / 15
+volatile bool sq2Enable = false;
+volatile int sq2Freq = 40;//85; // 0-2047 << 5
+volatile bool sq2Env = false; // Envelope
+volatile byte sq2Duty = 2; // 0-3
+volatile byte sq2FC = 0; // FreqChange 周波数変更量
+volatile bool sq2FCDirection = false; // 周波数変更方向 true->上がっていく
+volatile byte sq2FCCount = 0; // 周波数変更カウント数
+volatile bool sq2Sweep = false; // スイープ有効フラグ
+volatile byte sq2Vol = 20; // 0-63 音量 0-15 * rangeMax / 15
 // sq1 カウンタ
-byte sq2Pointer = sqrSize; // 波形のどこを再生しているか
-int sq2Counter = 0; // 分周器
+volatile byte sq2Pointer = sqrSize; // 波形のどこを再生しているか
+volatile int sq2Counter = 0; // 分周器
 
 
 // tri 設定
-bool triEnable = false;
-int triFreq = 10;//85; // 0-2047 << 5
-bool triEnv = false; // Envelope
-byte triFC = 0; // FreqChange 周波数変更量
-bool FCDirection = false; // 周波数変更方向 true->上がっていく
-byte triFCCount = 0; // 周波数変更カウント数
-bool triSweep = false; // スイープ有効フラグ
+volatile bool triEnable = false;
+volatile int triFreq = 10;//85; // 0-2047 << 5
+volatile bool triEnv = false; // Envelope
+volatile byte triFC = 0; // FreqChange 周波数変更量
+volatile bool FCDirection = false; // 周波数変更方向 true->上がっていく
+volatile byte triFCCount = 0; // 周波数変更カウント数
+volatile bool triSweep = false; // スイープ有効フラグ
 // tri カウンタ
 byte triPointer = triSize; // 波形のどこを再生しているか
-int triCounter = 0; // 分周器
+volatile int triCounter = 0; // 分周器
 
 
 // noise
-bool noiseEnable = true;
+volatile bool noiseEnable = true;
 volatile bool noiseShortFreq = false;
 volatile unsigned int noiseReg = 0x8000;
-byte noiseCountMax = 0x20;
-volatile byte noiseVol = 63; // 音量 0-15 * rangeMax / 15
+volatile byte noiseCountMax = 0x20;
+volatile byte noiseVol = 32; // 音量 0-15 * rangeMax / 15
 // noise カウンタ
-byte noiseCounter = 0;
+volatile byte noiseCounter = 0;
 
 void setup() {
   for (int i = 0; i < triSize; i++) {
@@ -111,7 +111,7 @@ void setup() {
   // 分周 1/1
   TCCR2B = (TCCR2B & 0b11111000) | 0b00000001;
   // compare register
-  OCR2A = 60;
+  OCR2A = 255;
   // interrupt when TCNT1 == OCR1A
   TIMSK2 = _BV(OCIE2A);
 
@@ -153,11 +153,17 @@ void loop() {
   
   if (waveChange) {
     waveChange = false;
+  }
+}
+
+ISR(TIMER2_COMPA_vect){
     register uint8_t output asm("r2");
 
     if (noiseEnable) {
       if (++noiseCounter == noiseCountMax) {
         asm volatile(
+          
+          
           // r19:r18 が noiseReg
             "lds r18, noiseReg \n"
             "lds r19, noiseReg+0x1 \n"
@@ -168,26 +174,24 @@ void loop() {
             "lds r0, noiseShortFreq \n"
             "and r0, r0 \n"
             "breq LONGFREQ \n"
-          // noiseReg >> 6  下位 1 bit があれば良い -> r5に 1 bitだけ
-            "mov r4, r18 \n"
-            "clr r5 \n"
-            "lsl r4 \n"
-            "lsl r4 \n"
-            "rol r5 \n"
+          // noiseReg >> 6  下位 1 bit があれば良い -> r17に 1 bitだけ
+            "clr r17 \n"
+            "sbrc r18, 6 \n" // 6bit目が0ならスキップ，1ならスキップせず1
+            "ldi r17, 1 \n"
             "rjmp DONE \n"
           // noiseReg >> 1
             "LONGFREQ:"
-            "mov r5, r18 \n"
-            "lsr r5 \n"
-          // r5 = shift済みreg ^ reg
-            "DONE: eor r5, r18 \n"
+            "mov r17, r18 \n"
+            "lsr r17 \n"
+          // r17 = shift済みreg ^ reg
+            "DONE: eor r17, r18 \n"
           // & 1) << 15
-            "clr r4 \n"
-            "lsr r5 \n"
-            "ror r4 \n"
-          // 最上位1bitだけ 0 or 1，残りは << 15 の為 0 -> 結果は r5 
-          // noiseReg r19 |= r4
-            "or r19, r4 \n"
+            "clr r16 \n"
+            "lsr r17 \n"
+            "ror r16 \n"
+          // 最上位1bitだけ 0 or 1，残りは << 15 の為 0 -> 結果は r17 
+          // noiseReg r19 |= r16
+            "or r19, r16 \n"
             "sts noiseReg, r18 \n"
             "sts noiseReg+1, r19 \n"
             "andi r18, 0x1\n"
@@ -231,14 +235,10 @@ void loop() {
     }
     
     OCR0A = output;
-  }
-}
-
-ISR(TIMER2_COMPA_vect){
-  waveChange = true;
 }
 
 ISR(TIMER1_COMPA_vect){
   nextFrame = true;
+  noiseShortFreq = !noiseShortFreq;
   //digitalWrite(13, foo = !foo ? HIGH : LOW);
 }
