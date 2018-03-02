@@ -43,7 +43,7 @@ void setup() {
   TCCR2B = (TCCR2B & 0b11111000) | 0b00000101;
   
   // compare register
-  OCR2A = 100;
+  OCR2A = 3;
   
   // interrupt when TCNT2 == OCR2A
   TIMSK2 = _BV(OCIE2A);
@@ -82,31 +82,21 @@ void loop() {
 volatile byte c = 0;
 volatile int i = 0;
 ISR(TIMER2_COMPA_vect){
-///*
+/*
   if (c == 1) {
     c = 0;
   } else {
     c = 1;
   }
   if (c == 1) {
-    OCR0A = 0x7f;
+    OCR0A = 0xff;
       PORTB |= _BV(4);
   } else {
     OCR0A = 0;
       PORTB &= ~_BV(4);
   }//*/
- /*
- if (c == 15) {
-   i++;
-   if (i % 1024 == 0)  triPointer == 31 ? triPointer = 0 : ++triPointer;
-    c = 1;
-  } else {
-    ++c;
-  }
-  
-  if (c < tri[triPointer]) {
-     // PORTB  |= _BV(4);
-  } else {
-      PORTB  &= ~_BV(4);
-  }//*/
+ ///*
+  ;
+  OCR0A =  tri[triPointer == 31 ? triPointer = 0 : ++triPointer] * 15;
+  //*/
 }
