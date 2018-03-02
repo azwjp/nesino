@@ -1,32 +1,51 @@
+#include <avr/pgmspace.h>
+
 constexpr byte dacResolution = 8;
-constexpr byte channel = 1;
+constexpr byte channel = 4;
 constexpr byte triSize = 32;
-#define DIVIDE 64
 constexpr int range = (1 << dacResolution) / channel;
 constexpr int rangeMax = range - 1;
+
 byte tri[triSize]; // 三角波データ
 byte saw[triSize]; // 三角波データ
+char sqr[4][triSize];
 byte sq0[triSize]; // 三角波データ
 byte sq1[triSize]; // 三角波データ
 byte sq2[triSize]; // 三角波データ
 byte sq3[triSize]; // 三角波データ
 volatile byte triPointer = 0;
 
-byte freqSq1 = 126;
+//
+PROGMEM const char dataSq1[] = {1,2,3};
 
-
-word counterSq1Reset = 0; // counterSq1 のリセット値
-word counterSq1 = 0; // 周波数制御の為の分周 max 2047
-byte cycleSq1 = 0; // 0-16 0_0000
+// sq1 設定
+volatile bool sq1Enable = true;
+volatile int sq1Freq = 127; // 0-2047 << 5
+volatile bool sq1Env = false; // Envelope
+volatile byte sq1Duty = 2; // 0-3
+volatile byte sq1FC = 0; // FreqChange 周波数変更量
+volatile bool sq1FCDirection = false; // 周波数変更方向 true->上がっていく
+volatile byte sq1FCCount = 0; // 周波数変更カウント数
+volatile bool sq1Sweep = false; // スイープ有効フラグ
+// sq1 カウンタ
+volatile byte sq1Pointer = 0; // 波形のどこを再生しているか
+volatile int sq1Counter = 0; // 分周器
 
 // noise
-volatile bool shortFreq = false;
-volatile unsigned int reg = 0x8000;
+volatile bool noiseEnable = false;
+volatile bool noiseShortFreq = false;
+volatile unsigned int noiseReg = 0x8000;
+volatile byte noiseCounter = 0;
+volatile byte noiseCountMax = 0x2;
 
 void setup() {
   for (int i = 0; i < triSize; i++) {
     tri[i] = range * (i < triSize / 2 ? i : triSize - i - 1) / (triSize / 2);
     saw[i] = range * i / triSize;
+    sqr[0][i] = i == 0 ? rangeMax : i == triSize / 8 ? - rangeMax : 0;
+    sqr[1][i] = i == 0 ? rangeMax : i == triSize / 4 ? - rangeMax : 0;
+    sqr[2][i] = i == 0 ? rangeMax : i == triSize / 2 ? - rangeMax : 0;
+    
     sq0[i] = i < triSize / 8 ? rangeMax : 0;
     sq1[i] = i < triSize / 4 ? rangeMax : 0;
     sq2[i] = i < triSize / 2 ? rangeMax : 0;
@@ -34,12 +53,11 @@ void setup() {
   /*
   Serial.begin(9600);
   for (int i = 0; i < 128; i++) {
-    Serial.print(calcNoise());
+    Serial.print(sqr[0][i]);
   }//*/
 
   cli();      // 割り込み禁止
   
-  ///*
   /* TIMER0: 出力の強さを制御するための PWM
    * できるだけ高速で回す
    * Top 255 なので 62500 Hz の PWM
@@ -55,70 +73,99 @@ void setup() {
   // 割り込み無し
   TIMSK0 = 0;
 
+///*
   // TIMER2: 出力の強さを変更するための PWM
   // CTC
   TCCR2A = 0b00000010;
   TCCR2B &= ~_BV(WGM02);
-
-  // 分周 1/1024
-  TCCR2B = (TCCR2B & 0b11111000) | 0b00000010;
+  // 分周 1/1
+  TCCR2B = (TCCR2B & 0b11111000) | 0b00000001;
   // compare register
-  OCR2A = 128;
+  OCR2A = 71;
   // interrupt when TCNT1 == OCR1A
   TIMSK2 = _BV(OCIE2A);
+//*/
 
+///*
   // CTC (ICR1)
-  TCCR1B = 0b00011010;
-  TCCR1A = 0;
+  TCCR1B = (TCCR1B & ~_BV(WGM13)) | _BV(WGM12);
+  TCCR1A = TCCR1A & ~(_BV(WGM11) | _BV(WGM10));
+
+  // 1/8
+  TCCR1B = (TCCR1B & ~_BV(CS11)) |_BV(CS12)|_BV(CS10);
+ // TCCR1B = (TCCR1B & ~(_BV(CS12) | _BV(CS10))) |_BV(CS11);
   
   // compare register
   // 16 MHz / 割り込み周波数 (Hz)
-  ICR1 = 8332;
+  OCR1A = 800;//8332;
   
-  // 捕獲割り込み
-  TIMSK1 = _BV(ICIE1);
-  
-  sei();    // 割り込み許可
+  // 割り込み
+  TIMSK1 |= _BV(OCIE1A);
   //*/
+  
   
   pinMode(13, OUTPUT);
   pinMode(12, OUTPUT);
   pinMode(6, OUTPUT);
+  sei();    // 割り込み許可
+  
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
 }
 
+#define calcNoise() ((noiseReg = (noiseReg >> 1) | ((((noiseReg >> 1) ^ (noiseReg >> (noiseShortFreq ? 7 : 2))) & 1) << 15)) & 1)
+/*
 byte calcNoise() { // 0 1 で返す
-  reg >>= 1;
-  reg |= ((reg ^ (reg >> (shortFreq ? 6 : 1))) & 1) << 15;
-  return reg & 1;
-}
+  noiseReg >>= 1;
+  noiseReg |= ((noiseReg ^ (noiseReg >> (noiseShortFreq ? 6 : 1))) & 1) << 15;
+  return noiseReg & 1;
+}*/
 
 volatile byte c = 0;
 volatile int i = 0;
+volatile byte output = 0;
 
 ISR(TIMER2_COMPA_vect){
-/*
-  if (c == 1) {
-    c = 0;
-  } else {
-    c = 1;
-  }
-  if (c == 1) {
-    OCR0A = 0xff;
-      PORTB |= _BV(4);
-  } else {
-    OCR0A = 0;
-      PORTB &= ~_BV(4);
+  //output = 0;
+  /*
+  output = 0;
+  if (noiseEnable && ++noiseCounter == noiseCountMax) {
+    noiseCounter = 0;
+    output = calcNoise() * rangeMax; //tri[triPointer == triSize ? triPointer = 0 : ++triPointer];
   }//*/
- ///*
-  ;
-  OCR0A = calcNoise() * rangeMax; //tri[triPointer == triSize ? triPointer = 0 : ++triPointer];
-  //*/
+  ///*
+  if (sq1Enable && ++sq1Counter == sq1Freq) {
+    sq1Counter = 0;
+    //output = sqr[sq1Duty][sq1Pointer == triSize ? sq1Pointer = 0 : ++sq1Pointer];
+    //output = ((sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer) >= (sq1Duty << 1)) * rangeMax;
+    //OCR0A += (sq1Pointer == 0 ? 1 : ((sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer) << 1 == sq1Duty) * -1) * rangeMax;
+    sq1Pointer == 8 ? sq1Pointer = 0 : ++sq1Pointer;
+    if (sq1Pointer == 0) {
+      OCR0A += rangeMax;
+    } else {
+      if (sq1Duty == 0 && sq1Pointer == 1) {
+        OCR0A -= rangeMax;
+      } else if (sq1Pointer << 1 == sq1Duty) {
+        OCR0A -= rangeMax;
+      }
+    }
+    
+  }//*/
+//  OCR0A = output;
 }
-
-ISR(TIMER1_CAPT_vect) 
-{
+volatile byte foo = 0;
+ISR(TIMER1_COMPA_vect){
+  
+  //digitalWrite(13, foo = !foo ? HIGH : LOW);
+  PORTB = foo = !foo ? 0b100000 : 0;
+  //PORTB |= _BV(5);
+  /*
+  if (foo < 2) {
+    ++foo;
+  } else {
+    //foo = 0;
+    sq1Enable = true;
+    
+  }*/
 }
