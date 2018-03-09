@@ -8,7 +8,7 @@ constexpr byte sqrSize = 8;
 constexpr int range = (1 << dacResolution) / channel;
 constexpr int rangeMax = range - 1;
 
-byte tri[triSize]; // 三角波データ
+byte tri[] = {1,1,1,1,1,1,1,1,1,1,1}; // 三角波データ
 byte saw[triSize]; // 三角波データ
 char sqr[4][triSize];
 
@@ -16,7 +16,7 @@ char sqr[4][triSize];
 PROGMEM const char dataSq1[] = {1, 2, 3};
 
 // enable設定
-volatile byte enableFlag = 0b00011101; // 000 noiseShortFrag sq1 sq2 tri noi
+volatile byte enableFlag = 0b00010010; // 000 noiseShortFrag sq1 sq2 tri noi
 
 // sq1 設定
 volatile int sq1Freq = 45; // 0-2047 << 5
@@ -26,20 +26,20 @@ volatile byte sq1FC = 0; // FreqChange 周波数変更量
 volatile bool sq1FCDirection = false; // 周波数変更方向 true->上がっていく
 volatile byte sq1FCCount = 0; // 周波数変更カウント数
 volatile bool sq1Sweep = false; // スイープ有効フラグ
-volatile byte sq1Vol = 15; // 音量 0-15
+volatile byte sq1Vol = 6; // 音量 0-15
 // sq1 カウンタ
 volatile byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
 volatile int sq1Counter = 0; // 分周器
 
 // sq2 設定
-volatile int sq2Freq = 30;//85; // 0-2047 << 5
+volatile int sq2Freq = 20;//85; // 0-2047 << 5
 volatile bool sq2Env = false; // Envelope
-volatile byte sq2Duty = 2; // 0-3
+volatile byte sq2Duty = 1; // 0-3
 volatile byte sq2FC = 0; // FreqChange 周波数変更量
 volatile bool sq2FCDirection = false; // 周波数変更方向 true->上がっていく
 volatile byte sq2FCCount = 0; // 周波数変更カウント数
 volatile bool sq2Sweep = false; // スイープ有効フラグ
-volatile byte sq2Vol = 15; // 音量 0-15
+volatile byte sq2Vol = 7; // 音量 0-15
 // sq1 カウンタ
 volatile byte sq2Pointer = sqrSize; // 波形のどこを再生しているか
 volatile int sq2Counter = 0; // 分周器
@@ -54,7 +54,7 @@ volatile bool FCDirection = false; // 周波数変更方向 true->上がって�
 volatile byte triFCCount = 0; // 周波数変更カウント数
 volatile bool triSweep = false; // スイープ有効フラグ
 // tri カウンタ
-byte triPointer = triSize; // 波形のどこを再生しているか
+volatile byte triPointer = triSize; // 波形のどこを再生しているか
 volatile int triCounter = 0; // 分周器
 
 
@@ -75,14 +75,12 @@ void setup() {
     sqr[1][i] = i < sqrSize / 4 ? 1 : 0;
     sqr[2][i] = i < sqrSize / 2 ? 1 : 0;
   }
-  /*
-    Serial.begin(9600);//
+    //Serial.begin(9600);//
 
+  /*
     for (int i = 0; i < triSize; i++) {
     Serial.println((int)tri[i]);
-    }//*/
-
-  cli();      // 割り込み禁止
+    }//*/  cli();      // 割り込み禁止
 
   /* TIMER0: 出力の強さを制御するための PWM
      できるだけ高速で回す
@@ -111,7 +109,7 @@ void setup() {
   // 分周 1/1
   TCCR2B = (TCCR2B & 0b11111000) | 0b00000001;
   // compare register
-  OCR2A = 255;
+  OCR2A = 150;
   // interrupt when TCNT1 == OCR1A
   TIMSK2 = _BV(OCIE2A);
 
@@ -131,6 +129,7 @@ void setup() {
   // 割り込み
   TIMSK1 |= _BV(OCIE1A);
 
+
   pinMode(13, OUTPUT);
   pinMode(12, OUTPUT);
   pinMode(6, OUTPUT);
@@ -142,7 +141,6 @@ void setup() {
 volatile bool waveChange = false;
 volatile bool nextFrame = false;
 
-byte output = 0;
 volatile byte currentNoise = 0;
 volatile byte foo = 0;
 
@@ -158,10 +156,8 @@ void loop() {
 }
 
 ISR(TIMER2_COMPA_vect) {
-  register uint8_t output asm("r2");
-  register uint8_t enable asm("r3");
-
-  asm volatile(
+    waveChange = true;
+    asm volatile(
 // if noise is enabled {
     "lds r3, enableFlag \n"
     // noiseがenableでなければ分岐
@@ -212,7 +208,7 @@ ISR(TIMER2_COMPA_vect) {
     "or r19, r16 \n"
     "sts noiseReg, r18 \n"
     "sts noiseReg+1, r19 \n"
-    "andi r18, 0x1\n"
+    "andi r18, 1\n"
     // calcNoise() * noiseVol
     "lds r2, noiseVol \n"
     "mul r18, r2 \n"
@@ -313,31 +309,57 @@ ISR(TIMER2_COMPA_vect) {
     "brlo TRI \n"
     "lds r4, sq2Vol \n"
     "add r2, r4 \n"
-    :"=&r"(output), "=&r"(enable)::
-  );
 
-  asm volatile(
-    "TRI: "
+// if tri is enabled
+  "TRI: "
+    "sbrs r3, 1 \n"
+    "rjmp OUTPUT \n"
+    
+    // [r16]
+    "lds r16, triPointer \n"
+//  if (++triCounter == triFreq) {
+    // [r16, r24, r25, r6, r7]
+    "lds r24, triCounter \n"
+    "lds r25, triCounter+1 \n"
+    "adiw r24, 1 \n"
+    "lds r6, triFreq \n"
+    "lds r7, triFreq+1 \n"
+    "cp r24, r6 \n"
+    "cpc r25, r7 \n"
+    // [r16, r24, r25]
+    "breq TRI_UPDATE \n"
+    "sts triCounter, r24 \n"
+    "sts triCounter+1, r25 \n"
+    "rjmp TRI_ENABLE \n"
+  "TRI_UPDATE: "
+    "sts triCounter, r1 \n"
+    "sts triCounter+1, r1 \n"
+    "inc r16 \n"
+    "sts triPointer, r16 \n"
+  // [r30, r5]
+  "TRI_ENABLE:"
+    "andi r16, 0b11111 \n"
+    "cpi r16, 16 \n"
+    "brlo TRI_OUTPUT \n"
+  // pointer is 16-31 -> 15,14,13,...,1,0
+    "neg r16 \n"
+    "subi r16, -31 \n"
+  "TRI_OUTPUT:"
+    "add r2, r16 \n"
+    
+  "OUTPUT:"
+    "out 0x28, r2" // OCR0B
+    :::"r24", "r25"
   );
-  if (triEnable) {
-    if (++triCounter == triFreq) {
-      triCounter = 0;
-      triPointer == triSize ? triPointer = 0 : ++triPointer;
-    }
-    output += tri[triPointer];
-  }
-  asm volatile(
-    "OUTPUT: "
-  );
-   // Serial.println((int)output);
-
-  OCR0B = output;
+ // Serial.println((byte)OCR0B);
 }
 
 ISR(TIMER1_COMPA_vect) {
   nextFrame = true;
   //if (enableFlag & 0b10000) enableFlag &= 0b11101111;
   //else enableFlag |= 0b10000;
+  //if (enableFlag & 1) enableFlag &= 0b11111110;
+  //else enableFlag |= 1;
   //if (enableFlag & 0b10000) enableFlag = 0b00000001;
   //else enableFlag = 0b10001;
   //digitalWrite(13, foo = !foo ? HIGH : LOW);
