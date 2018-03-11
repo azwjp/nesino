@@ -1,4 +1,5 @@
 #include <avr/pgmspace.h>
+#include <avr/interrupt.h>
 
 constexpr byte dacResolution = 8;
 constexpr byte channel = 4;
@@ -16,7 +17,7 @@ char sqr[4][triSize];
 PROGMEM const char dataSq1[] = {1, 2, 3};
 
 // enable設定
-volatile byte enableFlag = 0b00010010; // 000 noiseShortFrag sq1 sq2 tri noi
+volatile byte enableFlag = 0b00001110; // 000 noiseShortFrag sq1 sq2 tri noi
 
 // sq1 設定
 volatile int sq1Freq = 45; // 0-2047 << 5
@@ -61,9 +62,15 @@ volatile int triCounter = 0; // 分周器
 // noise
 volatile unsigned int noiseReg = 0x8000;
 volatile int noiseCountMax = 0x20;
-volatile byte noiseVol = 0; // 音量 0-15 * rangeMax / 15
+volatile byte noiseVol = 10; // 音量 0-15 * rangeMax / 15
 // noise カウンタ
 volatile int noiseCounter = 0;
+
+volatile bool waveChange = false;
+volatile bool nextFrame = false;
+
+volatile byte currentNoise = 0;
+volatile byte foo = 0;
 
 void setup() {
   for (int i = 0; i < triSize; i++) {
@@ -76,7 +83,6 @@ void setup() {
     sqr[2][i] = i < sqrSize / 2 ? 1 : 0;
   }
     //Serial.begin(9600);//
-
   /*
     for (int i = 0; i < triSize; i++) {
     Serial.println((int)tri[i]);
@@ -98,7 +104,6 @@ void setup() {
   // 割り込み無し
   TIMSK0 = 0;
 
-
   /* TIMER2: 波形を変更するタイミング
      本当は OCR2A = 8.9 にしたい．
      早すぎるとTIMER1の割り込みに失敗するので 71
@@ -109,7 +114,7 @@ void setup() {
   // 分周 1/1
   TCCR2B = (TCCR2B & 0b11111000) | 0b00000001;
   // compare register
-  OCR2A = 150;
+  OCR2A = 80;
   // interrupt when TCNT1 == OCR1A
   TIMSK2 = _BV(OCIE2A);
 
@@ -127,45 +132,50 @@ void setup() {
   OCR1A = 8332;//8332;
 
   // 割り込み
-  TIMSK1 |= _BV(OCIE1A);
+  TIMSK1 = _BV(OCIE1A);
 
 
   pinMode(13, OUTPUT);
   pinMode(12, OUTPUT);
   pinMode(6, OUTPUT);
   pinMode(5, OUTPUT);
-  sei();    // 割り込み許可
+digitalWrite(13, HIGH);
+  sei();
 
-}
-
-volatile bool waveChange = false;
-volatile bool nextFrame = false;
-
-volatile byte currentNoise = 0;
-volatile byte foo = 0;
-
-void loop() {
+/*
+ * global register
+ * r1: zero register
+ * r2: output
+ * r20: interrupt flag
+ * 
+ * used register
+ * r3 :enable flag
+ * NOISE
+ * r5, r6, r7, r16, r17, r18,r19 r24, r25
+ * SQ1, 2
+ * r5, r6, r7, r16, r24, r25
+ */
+    /*
   if (nextFrame) {
     nextFrame = false;
     PORTB = foo = !foo ? 0b100000 : 0;
-  }
+  }*/
 
-  if (waveChange) {
-    waveChange = false;
-  }
-}
+  asm volatile(
+  "STARTLOOP: "
+    "sbrs r20, 0 \n"
+    "rjmp STARTLOOP \n"
+    
+    "clr r2 \n"
 
-ISR(TIMER2_COMPA_vect) {
-    waveChange = true;
-    asm volatile(
 // if noise is enabled {
     "lds r3, enableFlag \n"
     // noiseがenableでなければ分岐
     "sbrs r3, 0 \n"
-    "rjmp NOISEDISABLE \n"
+    "rjmp SQ1 \n"
 
 // if (++noiseCounter == noiseCountMax)
-    // [r24, r25, r6, r7]
+    // [r25:r24 noiseCounter, r7:r6 noiseCountMax]
     "lds r24, noiseCounter \n"
     "lds r25, noiseCounter+1 \n"
     "adiw r24, 1 \n"
@@ -175,8 +185,7 @@ ISR(TIMER2_COMPA_vect) {
     "cpc r25, r7 \n"
     "brne NOISE_NOT_UPDATE \n"
 
-    // [r18, r19]
-    // r19:r18 が noiseReg
+    // [r19:r18 noiseReg]
     "lds r18, noiseReg \n"
     "lds r19, noiseReg+0x1 \n"
     // noiseReg >>= 1
@@ -186,33 +195,32 @@ ISR(TIMER2_COMPA_vect) {
     "sbrs r3, 4 \n"
     "rjmp LONGFREQ \n"
     // noiseReg >> 6  下位 1 bit があれば良い -> r17に 1 bitだけ
-    // [r17, r18, r19]
+    // [r17 (noiseReg >> 6) & 1, r19:r18 noiseReg]
     "clr r17 \n"
     "sbrc r18, 6 \n" // 6bit目が0ならスキップ，1ならスキップせず1
     "ldi r17, 1 \n"
     "rjmp DONE \n"
     // noiseReg >> 1
   "LONGFREQ:"
+    // [r17 ((noiseReg >> 1)^noiseReg)&1, r19:r18 noiseReg]
     "mov r17, r18 \n"
     "lsr r17 \n"
-    // r17 = shift済みreg ^ reg
   "DONE:"
     "eor r17, r18 \n"
     // & 1) << 15
-    // [r16, r17, r18, r19]
+    // [r16 15shifted, r17 last 1 bit, r19:r18 noiseReg]
     "clr r16 \n"
     "lsr r17 \n"
     "ror r16 \n"
+    // [r16 15shifted, r19:r18 noiseReg]
     // 最上位1bitだけ 0 or 1，残りは << 15 の為 0 -> 結果は r17
     // noiseReg r19 |= r16
     "or r19, r16 \n"
     "sts noiseReg, r18 \n"
     "sts noiseReg+1, r19 \n"
-    "andi r18, 1\n"
-    // calcNoise() * noiseVol
+    // if roiseReg & 1, then output noiseVol. otherwise 0;
+    "sbrs r18, 0 \n"
     "lds r2, noiseVol \n"
-    "mul r18, r2 \n"
-    "mov r2, r0 \n"
 
     "sts noiseCounter, r1 \n" // noiseCounter = 0
     "sts noiseCounter+1, r1 \n"
@@ -222,25 +230,22 @@ ISR(TIMER2_COMPA_vect) {
 
 // if noise counter is not max
   "NOISE_NOT_UPDATE:"
+    // [r25:r24 noiseCounter]
     "sts noiseCounter, r24 \n"
     "sts noiseCounter+1, r25 \n"
     "lds r2, currentNoise \n"
     "rjmp SQ1 \n"
 
-// } else {
-  "NOISEDISABLE:"
-    "clr r2 \n"
-// }
-
+  
 // if sq1 is enabled
   "SQ1: "
     "sbrs r3, 3 \n"
     "rjmp SQ2 \n"
 
-    // [r16]
+    // [r16 sq1Pointer]
     "lds r16, sq1Pointer \n"
 //  if (++sq1Counter == sq1Freq) {
-    // [r16, r24, r25, r6, r7]
+    // [r16 sq1Pointer, r25:r24 sq1Counter, r7:r6 sq1Freq]
     "lds r24, sq1Counter \n"
     "lds r25, sq1Counter+1 \n"
     "adiw r24, 1 \n"
@@ -248,17 +253,18 @@ ISR(TIMER2_COMPA_vect) {
     "lds r7, sq1Freq+1 \n"
     "cp r24, r6 \n"
     "cpc r25, r7 \n"
-    // [r16, r24, r25]
+    // [r16 sq1Pointer, r25:r24 sq1Counter]
     "breq SQ1_UPDATE \n"
     "sts sq1Counter, r24 \n"
     "sts sq1Counter+1, r25 \n"
     "rjmp SQ1_ENABLE \n"
   "SQ1_UPDATE: "
+    // [r16 sq1Pointer]
     "sts sq1Counter, r1 \n"
     "sts sq1Counter+1, r1 \n"
     "inc r16 \n"
     "sts sq1Pointer, r16 \n"
-    // [r16, r5]
+    // [r16 sq1Pointer, r5 sq1Duty]
   "SQ1_ENABLE:"
     // ((pointer & 0b111) <= (duty == 0 ? duty << 1 : duty << 1 - 1)) ? 1 : 0
     "andi r16, 0b111 \n" // pointer の下位3バイト
@@ -268,18 +274,19 @@ ISR(TIMER2_COMPA_vect) {
     "dec r5 \n"
     "cp r5, r16 \n" // duty < pointer
     "brlo SQ2 \n"
-    "lds r4, sq1Vol \n"
-    "add r2, r4 \n"
+    // [r16 sq1Pointer, r5 sq1Vol]
+    "lds r5, sq1Vol \n"
+    "add r2, r5 \n"
     
 // if sq2 is enabled
   "SQ2: "
     "sbrs r3, 2 \n"
     "rjmp TRI \n"
 
-    // [r16]
+    // [r16 sq2Pointer]
     "lds r16, sq2Pointer \n"
 //  if (++sq2Counter == sq2Freq) {
-    // [r16, r24, r25, r6, r7]
+    // [r16 sq2Pointer, r25:r24 sq2Counter, r7:r6 sq2Freq]
     "lds r24, sq2Counter \n"
     "lds r25, sq2Counter+1 \n"
     "adiw r24, 1 \n"
@@ -287,17 +294,18 @@ ISR(TIMER2_COMPA_vect) {
     "lds r7, sq2Freq+1 \n"
     "cp r24, r6 \n"
     "cpc r25, r7 \n"
-    // [r16, r24, r25]
+    // [r16 sq2Pointer, r25:r24 sq2Counter]
     "breq SQ2_UPDATE \n"
     "sts sq2Counter, r24 \n"
     "sts sq2Counter+1, r25 \n"
     "rjmp SQ2_ENABLE \n"
   "SQ2_UPDATE: "
+    // [r16 sq2Pointer]
     "sts sq2Counter, r1 \n"
     "sts sq2Counter+1, r1 \n"
     "inc r16 \n"
     "sts sq2Pointer, r16 \n"
-    // [r16, r5]
+    // [r16 sq2Pointer, r5 sq2Duty]
   "SQ2_ENABLE:"
     // ((pointer & 0b111) <= (duty == 0 ? duty << 1 : duty << 1 - 1)) ? 1 : 0
     "andi r16, 0b111 \n" // pointer の下位3バイト
@@ -307,18 +315,19 @@ ISR(TIMER2_COMPA_vect) {
     "dec r5 \n"
     "cp r5, r16 \n" // duty < pointer
     "brlo TRI \n"
-    "lds r4, sq2Vol \n"
-    "add r2, r4 \n"
+    // [r16 sq1Pointer, r5 sq2Vol]
+    "lds r5, sq2Vol \n"
+    "add r2, r5 \n"
 
 // if tri is enabled
   "TRI: "
     "sbrs r3, 1 \n"
     "rjmp OUTPUT \n"
     
-    // [r16]
+    // [r16 triPointer]
     "lds r16, triPointer \n"
 //  if (++triCounter == triFreq) {
-    // [r16, r24, r25, r6, r7]
+    // [r16 triPointer, r25:r24 triCounter, r7:r6 triFreq]
     "lds r24, triCounter \n"
     "lds r25, triCounter+1 \n"
     "adiw r24, 1 \n"
@@ -326,18 +335,19 @@ ISR(TIMER2_COMPA_vect) {
     "lds r7, triFreq+1 \n"
     "cp r24, r6 \n"
     "cpc r25, r7 \n"
-    // [r16, r24, r25]
+    // [r16 triPointer, r25:r24 triCounter]
     "breq TRI_UPDATE \n"
     "sts triCounter, r24 \n"
     "sts triCounter+1, r25 \n"
     "rjmp TRI_ENABLE \n"
   "TRI_UPDATE: "
+    // [r16 triPointer]
     "sts triCounter, r1 \n"
     "sts triCounter+1, r1 \n"
     "inc r16 \n"
     "sts triPointer, r16 \n"
-  // [r30, r5]
   "TRI_ENABLE:"
+    // [r16 triPointer]
     "andi r16, 0b11111 \n"
     "cpi r16, 16 \n"
     "brlo TRI_OUTPUT \n"
@@ -348,19 +358,29 @@ ISR(TIMER2_COMPA_vect) {
     "add r2, r16 \n"
     
   "OUTPUT:"
-    "out 0x28, r2" // OCR0B
-    :::"r24", "r25"
+    "out 0x28, r2 \n" // OCR0B
+
+    "andi r20, 0b11111110 \n"
+    "rjmp STARTLOOP \n"
+    :::
   );
- // Serial.println((byte)OCR0B);
+   // Serial.println((byte)OCR0B);
 }
 
-ISR(TIMER1_COMPA_vect) {
-  nextFrame = true;
-  //if (enableFlag & 0b10000) enableFlag &= 0b11101111;
-  //else enableFlag |= 0b10000;
-  //if (enableFlag & 1) enableFlag &= 0b11111110;
-  //else enableFlag |= 1;
-  //if (enableFlag & 0b10000) enableFlag = 0b00000001;
-  //else enableFlag = 0b10001;
-  //digitalWrite(13, foo = !foo ? HIGH : LOW);
+//#pragma GCC optimize ("O3")
+void loop() {
+}
+
+ISR(TIMER2_COMPA_vect, ISR_NAKED) {
+  asm volatile(
+    "ori r20, 1 \n"
+    "reti \n"
+  );
+}
+
+ISR(TIMER1_COMPA_vect, ISR_NAKED) {
+  asm volatile(
+    "ori r20, 2 \n"
+    "reti \n"
+  );
 }
