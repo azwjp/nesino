@@ -1,21 +1,3 @@
-#include <avr/pgmspace.h>
-#include <avr/interrupt.h>
-
-constexpr byte dacResolution = 8;
-constexpr byte channel = 4;
-constexpr byte triSize = 32;
-constexpr byte triRange = 15; // triのデータに書かれている最大の音量
-constexpr byte sqrSize = 8;
-constexpr int range = (1 << dacResolution) / channel;
-constexpr int rangeMax = range - 1;
-
-byte tri[] = {1,1,1,1,1,1,1,1,1,1,1}; // 三角波データ
-byte saw[triSize]; // 三角波データ
-char sqr[4][triSize];
-
-//
-PROGMEM const char dataSq1[] = {1, 2, 3};
-
 // enable設定
 volatile byte enableFlag = 0b00001110; // 000 noiseShortFrag sq1 sq2 tri noi
 
@@ -29,7 +11,7 @@ volatile byte sq1FCCount = 0; // 周波数変更カウント数
 volatile bool sq1Sweep = false; // スイープ有効フラグ
 volatile byte sq1Vol = 6; // 音量 0-15
 // sq1 カウンタ
-volatile byte sq1Pointer = sqrSize; // 波形のどこを再生しているか
+volatile byte sq1Pointer = -1; // 波形のどこを再生しているか
 volatile int sq1Counter = 0; // 分周器
 
 // sq2 設定
@@ -42,7 +24,7 @@ volatile byte sq2FCCount = 0; // 周波数変更カウント数
 volatile bool sq2Sweep = false; // スイープ有効フラグ
 volatile byte sq2Vol = 7; // 音量 0-15
 // sq1 カウンタ
-volatile byte sq2Pointer = sqrSize; // 波形のどこを再生しているか
+volatile byte sq2Pointer = -1; // 波形のどこを再生しているか
 volatile int sq2Counter = 0; // 分周器
 
 
@@ -55,9 +37,8 @@ volatile bool FCDirection = false; // 周波数変更方向 true->上がって�
 volatile byte triFCCount = 0; // 周波数変更カウント数
 volatile bool triSweep = false; // スイープ有効フラグ
 // tri カウンタ
-volatile byte triPointer = triSize; // 波形のどこを再生しているか
+volatile byte triPointer = -1; // 波形のどこを再生しているか
 volatile int triCounter = 0; // 分周器
-
 
 // noise
 volatile unsigned int noiseReg = 0x8000;
@@ -66,18 +47,10 @@ volatile byte noiseVol = 10; // 音量 0-15 * rangeMax / 15
 // noise カウンタ
 volatile int noiseCounter = 0;
 
-volatile bool waveChange = false;
-volatile bool nextFrame = false;
-
 volatile byte currentNoise = 0;
-volatile byte foo = 0;
 
 void setup() {
-    //Serial.begin(9600);//
-  /*
-    for (int i = 0; i < triSize; i++) {
-    Serial.println((int)tri[i]);
-    }//*/  cli();      // 割り込み禁止
+  cli();
 
   /* TIMER0: 出力の強さを制御するための PWM
      できるだけ高速で回す
@@ -125,12 +98,11 @@ void setup() {
   // 割り込み
   TIMSK1 = _BV(OCIE1A);
 
-
   pinMode(13, OUTPUT);
   pinMode(12, OUTPUT);
   pinMode(6, OUTPUT);
   pinMode(5, OUTPUT);
-digitalWrite(13, HIGH);
+  digitalWrite(13, HIGH);
   sei();
 
 /*
@@ -146,11 +118,6 @@ digitalWrite(13, HIGH);
  * SQ1, 2
  * r5, r6, r7, r16, r24, r25
  */
-    /*
-  if (nextFrame) {
-    nextFrame = false;
-    PORTB = foo = !foo ? 0b100000 : 0;
-  }*/
 
   asm volatile(
   "STARTLOOP: "
@@ -268,7 +235,8 @@ digitalWrite(13, HIGH);
     // [r16 sq1Pointer, r5 sq1Vol]
     "lds r5, sq1Vol \n"
     "add r2, r5 \n"
-    
+
+
 // if sq2 is enabled
   "SQ2: "
     "sbrs r3, 2 \n"
@@ -310,6 +278,7 @@ digitalWrite(13, HIGH);
     "lds r5, sq2Vol \n"
     "add r2, r5 \n"
 
+
 // if tri is enabled
   "TRI: "
     "sbrs r3, 1 \n"
@@ -347,7 +316,8 @@ digitalWrite(13, HIGH);
     "subi r16, -31 \n"
   "TRI_OUTPUT:"
     "add r2, r16 \n"
-    
+
+
   "OUTPUT:"
     "out 0x28, r2 \n" // OCR0B
 
@@ -355,11 +325,6 @@ digitalWrite(13, HIGH);
     "rjmp STARTLOOP \n"
     :::
   );
-   // Serial.println((byte)OCR0B);
-}
-
-//#pragma GCC optimize ("O3")
-void loop() {
 }
 
 ISR(TIMER2_COMPA_vect, ISR_NAKED) {
@@ -375,3 +340,7 @@ ISR(TIMER1_COMPA_vect, ISR_NAKED) {
     "reti \n"
   );
 }
+
+void loop() {
+}
+
