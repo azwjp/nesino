@@ -73,15 +73,6 @@ volatile byte currentNoise = 0;
 volatile byte foo = 0;
 
 void setup() {
-  for (int i = 0; i < triSize; i++) {
-    tri[i] = range * 16.0 / 15.0 * (i < triSize / 2 ? i : triSize - i - 1) / (triSize / 2);
-    saw[i] = range * i / triSize;
-  }
-  for (int i = 0; i < sqrSize; i++) {
-    sqr[0][i] = i < sqrSize / 8 ? 1 : 0;
-    sqr[1][i] = i < sqrSize / 4 ? 1 : 0;
-    sqr[2][i] = i < sqrSize / 2 ? 1 : 0;
-  }
     //Serial.begin(9600);//
   /*
     for (int i = 0; i < triSize; i++) {
