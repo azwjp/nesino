@@ -115,27 +115,29 @@ void setup() {
  * global register
  * r1: zero register
  * r2: output
- * r20: interrupt flag
+ * r20: interrupt or enable flag, unused changeSound newFrame noiseShortFrag sq1Enabled sq2Enabled triangleEnabled noiseEnabled
  * 
  * used register
- * r3 :enable flag
  * NOISE
  * r5, r6, r7, r16, r17, r18,r19 r24, r25
  * SQ1, 2
  * r5, r6, r7, r16, r24, r25
+ * TRI
+ * r6, r7, r16, r24, r25
  */
 
   asm volatile(
+    "lds r20, enableFlag \n"
+    
   "STARTLOOP: "
-    "sbrs r20, 0 \n"
+    "sbrs r20, 6 \n"
     "rjmp STARTLOOP \n"
 
     "clr r2 \n"
 
 // if noise is enabled {
-    "lds r3, enableFlag \n"
     // if noise isn't enable, then branch
-    "sbrs r3, 0 \n"
+    "sbrs r20, 0 \n"
     "rjmp SQ1 \n"
 
 // if (++noiseCounter == noiseCountMax)
@@ -156,7 +158,7 @@ void setup() {
     "lsr r19 \n"
     "ror r18 \n"
     // noiseShortFreq ?
-    "sbrs r3, 4 \n"
+    "sbrs r20, 4 \n"
     "rjmp LONGFREQ \n"
     // noiseReg >> 6. Only least significant bit is needed -> write 1 bit on r17
     // [r17 (noiseReg >> 6) & 1, r19:r18 noiseReg]
@@ -203,7 +205,7 @@ void setup() {
   
 // if sq1 is enabled
   "SQ1: "
-    "sbrs r3, 3 \n"
+    "sbrs r20, 3 \n"
     "rjmp SQ2 \n"
 
     // [r16 sq1Pointer]
@@ -245,7 +247,7 @@ void setup() {
 
 // if sq2 is enabled
   "SQ2: "
-    "sbrs r3, 2 \n"
+    "sbrs r20, 2 \n"
     "rjmp TRI \n"
 
     // [r16 sq2Pointer]
@@ -287,7 +289,7 @@ void setup() {
 
 // if tri is enabled
   "TRI: "
-    "sbrs r3, 1 \n"
+    "sbrs r20, 1 \n"
     "rjmp OUTPUT \n"
     
     // [r16 triPointer]
@@ -335,14 +337,14 @@ void setup() {
 
 ISR(TIMER2_COMPA_vect, ISR_NAKED) {
   asm volatile(
-    "ori r20, 1 \n"
+    "ori r20, 6 \n"
     "reti \n"
   );
 }
 
 ISR(TIMER1_COMPA_vect, ISR_NAKED) {
   asm volatile(
-    "ori r20, 2 \n"
+    "ori r20, 5 \n"
     "reti \n"
   );
 }
