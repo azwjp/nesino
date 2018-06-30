@@ -7,7 +7,7 @@ volatile bool sq1Env = false; // Envelope
 volatile byte sq1Duty = 2; // 0-3
 volatile byte sq1FC = 0; // FreqChange Freqency change amount
 volatile bool sq1FCDirection = false; // Frequency change direction: true -> up
-volatile byte sq1FCCount = 0; // Freqency change count
+volatile byte sq1FCCount = 120; // Freqency change count
 volatile bool sq1Sweep = false; // Flag of sweep enabled
 volatile byte sq1Vol = 6; // Volume 0-15
 // sq1 カウンタ
@@ -65,7 +65,7 @@ void setup() {
   // no division
   TCCR0B = (TCCR0B & 0b11111000) | 0b00000001;
   // Top
-  OCR0A = 64;
+  OCR0A = 63;
   // compare register -> output level
   OCR0B = 0;
   // no interrupts
@@ -81,7 +81,7 @@ void setup() {
   // no devision
   TCCR2B = (TCCR2B & 0b11111000) | 0b00000001;
   // compare register
-  OCR2A = 80;
+  OCR2A = 75;
   // interrupt when TCNT2 == OCR2A
   TIMSK2 = _BV(OCIE2A);
 
@@ -115,7 +115,7 @@ void setup() {
  * global register
  * r1: zero register
  * r2: output
- * r20: interrupt or enable flag, unused changeSound newFrame noiseShortFrag sq1Enabled sq2Enabled triangleEnabled noiseEnabled
+ * r20: interrupt or enable flag, counterReflesh changeSound newFrame noiseShortFrag sq1Enabled sq2Enabled triangleEnabled noiseEnabled
  * 
  * used register
  * NOISE
@@ -131,6 +131,11 @@ void setup() {
     
   "STARTLOOP: "
     "sbrs r20, 6 \n"
+    "rjmp SOUNDCHANGE \n"
+    "addi r20, 0xF0 \n"
+
+  "SOUNDCHANGE"
+    "sbrs r20, 7 \n"
     "rjmp STARTLOOP \n"
 
     "clr r2 \n"
